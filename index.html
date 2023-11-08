@@ -108,8 +108,8 @@
             if (disallowedEvents.includes(parseInt(eventId))) {
                 alert("This waveform is not our target event");
             } else {
-                const file = await openFile('http://localhost:8000/results/result'+eventId+'.root');
-                const resp = await fetch("http://localhost:8000/results/result"+eventId+'.json')
+                const file = await openFile('results/result'+eventId+'.root');
+                const resp = await fetch("results/result"+eventId+'.json')
                 const filejson = await resp.json();
                 updateEventInfo(eventId, filejson);
                 const form = document.querySelector('form');
