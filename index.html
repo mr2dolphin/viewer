@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>RED-muon viewer</title>
+        <link rel="stylesheet" href="css/master.css">
+        <link rel="shortcut icon" href="https://root.cern/js/latest/img/RootIcon.ico">
+    </head>
+    <body>
+        <header>
+            <h1>RED-muon viewer</h1>
+            <div class="content_header">
+                <label for="eventid">ID of event to view:</label>
+                <input type="number" id="eventid" name="eventid" value="0" min="0" max="178">
+                <img src="resources/up-arrow.svg" id="eid_up" style="height: 10px">
+                <img src="resources/down-arrow.svg" id="eid_down" style="height: 10px">
+                <button id="updateview">Draw</button>
+            </div>
+            <form>
+                <fieldset>
+                    <legend>Select mode:</legend>
+                    <div>
+                        <input type="radio" id="mode_histmain" name="mode" value="histmain" checked />
+                        <label for="mode_histmain">Combined waveform</label>
+                    </div>
+                    <div>
+                        <input type="radio" id="mode_2d" name="mode" value="2d" />
+                        <label for="mode_2d">2D plots (XY & XT)</label>
+                    </div>
+                    <div>
+                        <input type="radio" id="mode_3d" name="mode" value="3d" />
+                        <label for="mode_3d">3D plot (XYT)</label>
+                    </div>
+                    <div>
+                        <input type="radio" id="mode_histchannels" name="mode" value="histchannel" />
+                        <label for="mode_histchannels">Per-channel waveform</label>
+                        <input type="number" id="chid" name="chid" value="0" min="0" max="23">
+                        <label for="chid">(ID of channel)</label>
+                    </div>
+                </fieldset>
+            </form>
+        </header>
+        <main>
+            <div id="parameters">
+                <h id="tAmpT"></h>
+                <h id="tStartL"></h>
+                <h id="tEndL"></h>
+                <h id="theta"></h>
+            </div>
+            <div id="div_xy"><h id="xy"></h></div>
+            <div id="div_xt"><h id="xt"></h></div>
+            <div id="canvas"></div>
+        </main>
+        <footer>
+            <h1>2023, National Nuclear Research University «MEPhI»</h1>
+        </footer>
+    </body>
+    <script type="module">
+        import {openFile, draw, redraw} from "https://root.cern/js/latest/modules/main.mjs";
+
+        let drawn = false;
+        let previousId = -1;
+        const disallowedEvents = [1, 6, 7, 8, 9, 10, 16, 18, 24, 29, 37, 38, 39, 41, 42, 44, 45, 49, 56, 57, 60, 64, 65, 69, 70, 71, 75, 81, 83, 90, 93, 95, 104, 105, 109, 112, 120, 122, 125, 126, 128, 131, 134, 135, 141, 142, 144, 146, 149, 154, 170, 172, 176];
+        function updateEventInfo(eventId, tree) {
+            if (previousId !== eventId) {
+                document.querySelector('#tAmpT').innerHTML = "tAmpT = " + (tree["tAmpT"]*0.04).toFixed(2) + " µs | ";
+                document.querySelector('#tStartL').innerHTML = "tStartL = " + (tree["tStartL"]*0.04).toFixed(2) + " µs | ";
+                document.querySelector('#tEndL').innerHTML = "tEndL = " + (tree["tEndL"]*0.04).toFixed(2) + " µs | ";
+                document.querySelector('#theta').innerHTML = "θ = (" + (tree["theta"]*180/3.1415).toFixed(2) + " ± " + (tree["dtheta"]*180/3.1415).toFixed(2) + ") °";
+                if (tree["fit1"] === 0) {
+                    document.querySelector('#xy').innerHTML = "y = (" + (tree["k1"]).toFixed(3) + "±" + (tree["dk1"]).toFixed(3) + ")*x + (" + (tree["b1"]).toFixed(3) + "±" + (tree["db1"]).toFixed(3) + ")";
+                } else {
+                    document.querySelector('#xy').innerHTML = "x = (" + (tree["k1"]).toFixed(3) + "±" + (tree["dk1"]).toFixed(3) + ")*y + (" + (tree["b1"]).toFixed(3) + "±" + (tree["db1"]).toFixed(3) + ")";
+                }
+                if (tree["fit2"] === 2) {
+                    document.querySelector('#xt').innerHTML = "t = (" + (tree["k2"]).toFixed(3) + "±" + (tree["dk2"]).toFixed(3) + ")*x + (" + (tree["b2"]).toFixed(3) + "±" + (tree["db2"]).toFixed(3) + ")";
+                } else {
+                    document.querySelector('#xt').innerHTML = "x = (" + (tree["k2"]).toFixed(3) + "±" + (tree["dk2"]).toFixed(3) + ")*t + (" + (tree["b2"]).toFixed(3) + "±" + (tree["db2"]).toFixed(3) + ")";
+                }
+            }
+        }
+
+        async function downButtonPressed() {
+            let eventBlock = document.querySelector('#eventid');
+            if (eventBlock.value > 0) {
+                eventBlock.value = parseInt(eventBlock.value) - 1;
+                while (disallowedEvents.includes(parseInt(eventBlock.value))) {
+                    eventBlock.value = parseInt(eventBlock.value) - 1;
+                }
+                await updateView();
+            }
+        }
+        
+        async function upButtonPressed() {
+            let eventBlock = document.querySelector('#eventid');
+            if (eventBlock.value < 177) {
+                eventBlock.value = parseInt(eventBlock.value) + 1;
+                while (disallowedEvents.includes(parseInt(eventBlock.value))) {
+                    eventBlock.value = parseInt(eventBlock.value) + 1;
+                }
+                await updateView();
+            }
+        }
+
+        async function updateView() {
+            const eventId = document.querySelector('#eventid').value;
+            if (disallowedEvents.includes(parseInt(eventId))) {
+                alert("This waveform is not our target event");
+            } else {
+                const file = await openFile('http://localhost:8000/results/result'+eventId+'.root');
+                const resp = await fetch("http://localhost:8000/results/result"+eventId+'.json')
+                const filejson = await resp.json();
+                updateEventInfo(eventId, filejson);
+                const form = document.querySelector('form');
+                const data = new FormData(form); 
+                let mode;
+                for (const entry of data) {
+                    switch(entry[1]) {
+                        case 'histmain':
+                            mode = 'c_main;1';
+                            break;
+                        case '2d':
+                            mode = 'c_xy;1';
+                            break;
+                        case '3d':
+                            mode = 'c_xyt;1';
+                            break;
+                        case 'histchannel':
+                            mode = 'c' + (document.querySelector('#chid').value) + ';1'
+                    }
+                }
+                let canvas;
+                if (drawn && mode !== "c_xyt;1") {
+                    canvas = await file.readObject("c_xyt;1");
+                    await redraw("canvas", canvas, "");
+                    canvas = await file.readObject(mode);
+                    redraw("canvas", canvas, "");
+                }
+                else if (mode === 'c_xyt;1' && !drawn) {
+                    canvas = await file.readObject("c_xy;1");
+                    await draw("canvas", canvas, "");
+                    drawn = true;
+                    canvas = await file.readObject(mode);
+                    redraw("canvas", canvas, "");
+                }
+                else {
+                    canvas = await file.readObject(mode);
+                    if (drawn) {
+                        redraw("canvas", canvas, "");
+                    } else {
+                        drawn = true;
+                        draw("canvas", canvas, "");
+                    }
+                }
+                previousId = eventId;
+            }
+        }
+        document.querySelector('#updateview').addEventListener("click", updateView, false);
+        document.querySelector('#eid_up').addEventListener("click", upButtonPressed, false);
+        document.querySelector('#eid_down').addEventListener("click", downButtonPressed, false);
+    </script>
+</html>
